@@ -2,54 +2,35 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { ethers } from "ethers";
 import { CONTRACT_ADDRESS, ABI } from "../abi/index.js";
 
-// ─────────────────────────────────────────────────────────────────
-// OP_WALLET DETECTION
-// OP_WALLET (opnet.org) is forked from UniSat.
-// It injects itself as window.opnet on the page.
-// We check every known injection key.
-// ─────────────────────────────────────────────────────────────────
-
+// OP_WALLET injects as window.opnet ONLY
+// We never touch window.ethereum — that opens Rabby/MetaMask
 function getOPWallet() {
   if (typeof window === "undefined") return null;
-
-  // OP_WALLET primary — confirmed injection point
   if (window.opnet) return window.opnet;
-
-  // OP_WALLET alternate keys used in some versions
   if (window.opwallet) return window.opwallet;
   if (window.OPWallet) return window.OPWallet;
-
-  // OP_WALLET may also override window.ethereum like MetaMask does
-  if (window.ethereum) return window.ethereum;
-
-  return null;
+  return null; // DO NOT fallback to window.ethereum
 }
 
-// Poll for up to `ms` ms — extensions inject asynchronously after page load
-function waitForOPWallet(ms) {
+function waitForOPWallet() {
   return new Promise(function(resolve) {
     var w = getOPWallet();
     if (w) { resolve(w); return; }
-
+    var tries = 0;
     var interval = setInterval(function() {
       var found = getOPWallet();
+      tries++;
       if (found) {
         clearInterval(interval);
-        clearTimeout(timeout);
         resolve(found);
+      } else if (tries > 30) {
+        clearInterval(interval);
+        resolve(null);
       }
     }, 100);
-
-    var timeout = setTimeout(function() {
-      clearInterval(interval);
-      resolve(null);
-    }, ms || 3000);
   });
 }
 
-// ─────────────────────────────────────────────────────────────────
-// HOOK
-// ─────────────────────────────────────────────────────────────────
 export function useWallet() {
   var [account,    setAccount]    = useState(null);
   var [provider,   setProvider]   = useState(null);
@@ -68,24 +49,17 @@ export function useWallet() {
     var n = await p.getNetwork();
     var a = await s.getAddress();
     var b = await p.getBalance(a);
-
     var c = null;
     if (CONTRACT_ADDRESS && CONTRACT_ADDRESS !== "0x0000000000000000000000000000000000000000") {
       c = new ethers.Contract(CONTRACT_ADDRESS, ABI, s);
     }
-
-    var name = "OP Wallet";
-    if (raw === window.ethereum && !window.opnet && !window.opwallet) {
-      name = "MetaMask";
-    }
-
     setAccount(a);
     setProvider(p);
     setSigner(s);
     setContract(c);
     setChainId(Number(n.chainId));
     setBalance(ethers.formatEther(b));
-    setWalletName(name);
+    setWalletName("OP Wallet");
     setError(null);
   }, []);
 
@@ -94,27 +68,21 @@ export function useWallet() {
     busy.current = true;
     setConnecting(true);
     setError(null);
-
     try {
-      var raw = await waitForOPWallet(3000);
-
+      var raw = await waitForOPWallet();
       if (!raw) {
-        throw new Error("OP Wallet not found. Make sure OP_WALLET extension is installed and refresh the page.");
+        throw new Error("OP Wallet not detected. Please install OP_WALLET from opnet.org and refresh.");
       }
-
       var accounts = await raw.request({ method: "eth_requestAccounts" });
-
       if (!accounts || accounts.length === 0) {
-        throw new Error("No accounts returned. Please unlock your OP Wallet.");
+        throw new Error("No accounts found. Please unlock your OP Wallet.");
       }
-
       await _setup(raw);
-
     } catch (err) {
       if (err.code === 4001) {
-        setError("Rejected. Please approve the connection in OP Wallet.");
+        setError("Rejected. Please approve in OP Wallet.");
       } else if (err.code === -32002) {
-        setError("OP Wallet popup is already open. Check your browser extension.");
+        setError("OP Wallet popup already open.");
       } else {
         setError(err.message || "Failed to connect OP Wallet.");
       }
@@ -141,13 +109,12 @@ export function useWallet() {
       var b = await provider.getBalance(account);
       setBalance(ethers.formatEther(b));
     } catch (e) {
-      console.log("refreshBalance error", e);
+      console.log("balance refresh error", e);
     }
   }, [provider, account]);
 
-  // Auto-reconnect silently on page load
   useEffect(function() {
-    waitForOPWallet(3000).then(async function(raw) {
+    waitForOPWallet().then(async function(raw) {
       if (!raw) return;
       try {
         var accs = await raw.request({ method: "eth_accounts" });
@@ -160,15 +127,12 @@ export function useWallet() {
     });
   }, [_setup]);
 
-  // Listen for wallet events
   useEffect(function() {
     var active = true;
     var raw = null;
-
-    waitForOPWallet(3000).then(function(w) {
+    waitForOPWallet().then(function(w) {
       if (!w || !active) return;
       raw = w;
-
       function onAccounts(accs) {
         if (!accs || accs.length === 0) {
           disconnect();
@@ -176,23 +140,13 @@ export function useWallet() {
           _setup(raw).catch(function(e) { console.log(e); });
         }
       }
-
-      function onChain() {
-        window.location.reload();
-      }
-
-      function onDisconnect() {
-        disconnect();
-      }
-
+      function onChain() { window.location.reload(); }
+      function onDisconnect() { disconnect(); }
       raw.on("accountsChanged", onAccounts);
       raw.on("chainChanged", onChain);
       raw.on("disconnect", onDisconnect);
     });
-
-    return function() {
-      active = false;
-    };
+    return function() { active = false; };
   }, [_setup, disconnect]);
 
   return {
