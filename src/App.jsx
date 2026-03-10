@@ -1,5 +1,4 @@
 import { useState, useEffect, createContext, useContext, useCallback } from "react";
-import { ethers } from "ethers";
 import {
   AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
@@ -9,7 +8,7 @@ import { useMarkets, useBetActions, useUserBets } from "./hooks/useMarkets.js";
 import {
   fetchBTCPrice, fetchBTCDominance,
   formatBTC, fmtUSD, formatTimeRemaining,
-  CATEGORIES, calcPotentialPayout, shortAddr,
+  CATEGORIES, calcPotentialPayout,
 } from "./utils/oracle.js";
 
 // ─────────────────────────────────────────────
