@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+cache/
+artifacts/
+typechain-types/
+deployment.json
+*.local
