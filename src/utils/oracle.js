@@ -7,11 +7,13 @@ export const CATEGORIES = {
 
 export async function fetchBTCPrice() {
   try {
-    const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_market_cap=true");
+    const r = await fetch(
+      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_market_cap=true"
+    );
     const d = await r.json();
     if (!d.bitcoin) return null;
     return { price: d.bitcoin.usd, change24h: d.bitcoin.usd_24h_change, marketCap: d.bitcoin.usd_market_cap };
-  } catch { return null; }
+  } catch (e) { return null; }
 }
 
 export async function fetchBTCDominance() {
@@ -19,7 +21,7 @@ export async function fetchBTCDominance() {
     const r = await fetch("https://api.coingecko.com/api/v3/global");
     const d = await r.json();
     return d.data?.market_cap_percentage?.btc ?? null;
-  } catch { return null; }
+  } catch (e) { return null; }
 }
 
 export function formatBTC(amount, decimals = 6) {
@@ -36,7 +38,9 @@ export function fmtUSD(n) {
 export function formatTimeRemaining(endTime) {
   const diff = endTime - Date.now() / 1000;
   if (diff <= 0) return "Ended";
-  const d = Math.floor(diff / 86400), h = Math.floor((diff % 86400) / 3600), m = Math.floor((diff % 3600) / 60);
+  const d = Math.floor(diff / 86400);
+  const h = Math.floor((diff % 86400) / 3600);
+  const m = Math.floor((diff % 3600) / 60);
   if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
@@ -48,7 +52,9 @@ export function shortAddr(addr) {
 }
 
 export function calcPotentialPayout(betAmount, myPool, totalPool) {
-  const a = parseFloat(betAmount), my = parseFloat(myPool) + a, tot = parseFloat(totalPool) + a;
+  const a  = parseFloat(betAmount);
+  const my = parseFloat(myPool) + a;
+  const tot = parseFloat(totalPool) + a;
   if (!my || !a) return "0";
   return ((a / my) * tot * 0.98).toFixed(6);
 }
