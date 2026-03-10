@@ -1,0 +1,29 @@
+{
+  "name": "bitpredict",
+  "version": "1.0.0",
+  "description": "Decentralized Bitcoin prediction market on OP_NET — Week 3",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "compile": "npx hardhat compile",
+    "test": "npx hardhat test",
+    "deploy:local": "npx hardhat run scripts/deploy.js --network hardhat",
+    "deploy:testnet": "npx hardhat run scripts/deploy.js --network opnet_testnet",
+    "deploy:mainnet": "npx hardhat run scripts/deploy.js --network opnet_mainnet"
+  },
+  "dependencies": {
+    "ethers": "^6.11.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "dotenv": "^16.4.5",
+    "hardhat": "^2.22.4",
+    "vite": "^5.3.1"
+  }
+}
