@@ -1,174 +1,189 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 import { CONTRACT_ADDRESS, ABI } from "../abi/index.js";
 
-// OP_WALLET is forked from UniSat wallet
-// It uses Bitcoin wallet API: window.opnet.requestAccounts()
-// NOT EIP-1193 .request({ method: "eth_requestAccounts" })
+// ── useMarkets ────────────────────────────────────────────────────────────────
+export function useMarkets(contract) {
+  const [markets,     setMarkets]     = useState([]);
+  const [loading,     setLoading]     = useState(false);
+  const [totalVolume, setTotalVolume] = useState("0");
 
-function getOPWallet() {
-  if (typeof window === "undefined") return null;
-  if (window.opnet) return window.opnet;
-  if (window.opwallet) return window.opwallet;
-  if (window.OPWallet) return window.OPWallet;
-  return null;
-}
-
-function waitForOPWallet() {
-  return new Promise(function(resolve) {
-    var w = getOPWallet();
-    if (w) { resolve(w); return; }
-    var tries = 0;
-    var interval = setInterval(function() {
-      tries++;
-      var found = getOPWallet();
-      if (found) { clearInterval(interval); resolve(found); }
-      else if (tries > 30) { clearInterval(interval); resolve(null); }
-    }, 100);
-  });
-}
-
-export function useWallet() {
-  var [account,    setAccount]    = useState(null);
-  var [balance,    setBalance]    = useState("0");
-  var [connecting, setConnecting] = useState(false);
-  var [error,      setError]      = useState(null);
-  var [chainId,    setChainId]    = useState(null);
-  var [contract,   setContract]   = useState(null);
-  var busy = useRef(false);
-
-  var connect = useCallback(async function() {
-    if (busy.current) return;
-    busy.current = true;
-    setConnecting(true);
-    setError(null);
-
+  const fetchAll = useCallback(async () => {
+    if (!contract) return;
+    setLoading(true);
     try {
-      var wallet = await waitForOPWallet();
-
-      if (!wallet) {
-        throw new Error("OP Wallet not found. Install OP_WALLET from opnet.org and refresh.");
-      }
-
-      // OP_WALLET (UniSat fork) uses .requestAccounts() directly
-      var accounts = await wallet.requestAccounts();
-
-      if (!accounts || accounts.length === 0) {
-        throw new Error("No accounts returned. Please unlock OP Wallet.");
-      }
-
-      var addr = accounts[0];
-      setAccount(addr);
-
-      // Get balance
-      try {
-        var balData = await wallet.getBalance();
-        if (balData && balData.confirmed !== undefined) {
-          // Balance is in satoshis, convert to BTC
-          setBalance((balData.confirmed / 100000000).toFixed(8));
+      const count = Number(await contract.marketCount());
+      const vol   = await contract.totalVolume();
+      setTotalVolume(ethers.formatEther(vol));
+      const list = [];
+      for (let i = 1; i <= count; i++) {
+        try {
+          const m            = await contract.getMarket(i);
+          const [yBps, nBps] = await contract.getOdds(i);
+          const yPool = ethers.formatEther(m.yesPool);
+          const nPool = ethers.formatEther(m.noPool);
+          const total = (parseFloat(yPool) + parseFloat(nPool)).toFixed(8);
+          const now   = Date.now() / 1000;
+          list.push({
+            id        : Number(m.id),
+            question  : m.question,
+            category  : m.category,
+            creator   : m.creator,
+            createdAt : Number(m.createdAt),
+            endTime   : Number(m.endTime),
+            yesPool   : yPool,
+            noPool    : nPool,
+            totalPool : total,
+            resolved  : m.resolved,
+            outcome   : m.outcome,
+            cancelled : m.cancelled,
+            imageUrl  : m.imageUrl,
+            yesOdds   : Number(yBps) / 100,
+            noOdds    : Number(nBps) / 100,
+            isActive  : !m.resolved && !m.cancelled && Number(m.endTime) > now,
+          });
+        } catch (e) {
+          console.warn("market fetch error", i, e.message);
         }
-      } catch (e) {
-        console.log("balance fetch failed", e);
       }
-
-      // Get network
-      try {
-        var network = await wallet.getNetwork();
-        setChainId(network);
-      } catch (e) {
-        console.log("network fetch failed", e);
-      }
-
-      setError(null);
-
-    } catch (err) {
-      if (err.code === 4001) {
-        setError("Rejected. Please approve in OP Wallet.");
-      } else {
-        setError(err.message || "Failed to connect OP Wallet.");
-      }
-    } finally {
-      setConnecting(false);
-      busy.current = false;
-    }
-  }, []);
-
-  var disconnect = useCallback(function() {
-    setAccount(null);
-    setBalance("0");
-    setChainId(null);
-    setContract(null);
-    setError(null);
-  }, []);
-
-  var refreshBalance = useCallback(async function() {
-    var wallet = getOPWallet();
-    if (!wallet || !account) return;
-    try {
-      var balData = await wallet.getBalance();
-      if (balData && balData.confirmed !== undefined) {
-        setBalance((balData.confirmed / 100000000).toFixed(8));
-      }
+      setMarkets(list);
     } catch (e) {
-      console.log("refreshBalance error", e);
+      console.error("fetchAll error:", e);
+    } finally {
+      setLoading(false);
     }
-  }, [account]);
+  }, [contract]);
 
-  // Auto-reconnect silently
-  useEffect(function() {
-    waitForOPWallet().then(async function(wallet) {
-      if (!wallet) return;
-      try {
-        var accounts = await wallet.getAccounts();
-        if (accounts && accounts.length > 0) {
-          setAccount(accounts[0]);
-          try {
-            var balData = await wallet.getBalance();
-            if (balData && balData.confirmed !== undefined) {
-              setBalance((balData.confirmed / 100000000).toFixed(8));
-            }
-          } catch (e) {
-            console.log("auto balance error", e);
-          }
-        }
-      } catch (e) {
-        console.log("auto-reconnect skipped", e);
-      }
-    });
-  }, []);
+  useEffect(() => {
+    fetchAll();
+    const id = setInterval(fetchAll, 30000);
+    return () => clearInterval(id);
+  }, [fetchAll]);
 
-  // Listen for account/network changes
-  useEffect(function() {
-    var active = true;
-    waitForOPWallet().then(function(wallet) {
-      if (!wallet || !active) return;
-      function onAccounts(accs) {
-        if (!accs || accs.length === 0) disconnect();
-        else setAccount(accs[0]);
-      }
-      function onNetwork() { window.location.reload(); }
-      if (wallet.on) {
-        wallet.on("accountsChanged", onAccounts);
-        wallet.on("networkChanged", onNetwork);
-      }
-    });
-    return function() { active = false; };
-  }, [disconnect]);
+  return { markets, loading, totalVolume, refetch: fetchAll };
+}
+
+// Get ethers contract — works whether wallet is EVM or OP_WALLET (Bitcoin)
+async function getContract() {
+  if (!window.ethereum) throw new Error("No EVM provider found");
+  if (!CONTRACT_ADDRESS || CONTRACT_ADDRESS === "0x0000000000000000000000000000000000000000") {
+    throw new Error("Contract not deployed yet. Add VITE_CONTRACT_ADDRESS to .env");
+  }
+  const provider = new ethers.BrowserProvider(window.ethereum);
+  const signer   = await provider.getSigner();
+  return new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+}
+
+// ── useBetActions ─────────────────────────────────────────────────────────────
+export function useBetActions(contract, account, onSuccess) {
+  const [pending, setPending] = useState(false);
+  const [txHash,  setTxHash]  = useState(null);
+  const [error,   setError]   = useState(null);
+
+  const _run = useCallback(async (fn) => {
+    if (!account) { setError("Wallet not connected"); return null; }
+    setPending(true); setError(null); setTxHash(null);
+    try {
+      // Use passed contract or get fresh one from window.ethereum
+      const c  = contract || await getContract();
+      const tx = await fn(c);
+      setTxHash(tx.hash);
+      await tx.wait();
+      return tx.hash;
+    } catch (e) {
+      const msg = e?.reason || e?.shortMessage || e?.message || "Transaction failed";
+      setError(msg);
+      return null;
+    } finally {
+      setPending(false);
+    }
+  }, [contract, account]);
+
+  const placeBet = useCallback(async (marketId, side, amountEth) => {
+    const value = ethers.parseEther(String(amountEth));
+    const hash  = await _run((c) =>
+      side ? c.betYes(marketId, { value }) : c.betNo(marketId, { value })
+    );
+    if (hash) onSuccess && onSuccess("bet", hash);
+    return hash;
+  }, [_run, onSuccess]);
+
+  const claimReward = useCallback(async (marketId) => {
+    const hash = await _run((c) => c.claim(marketId));
+    if (hash) onSuccess && onSuccess("claim", hash);
+    return hash;
+  }, [_run, onSuccess]);
+
+  const createMarket = useCallback(async (question, category, durationSecs, imageUrl) => {
+    const hash = await _run((c) =>
+      c.createMarket(question, category, BigInt(durationSecs), imageUrl || "")
+    );
+    if (hash) onSuccess && onSuccess("create", hash);
+    return hash;
+  }, [_run, onSuccess]);
+
+  const resolveMarket = useCallback(async (marketId, outcome) => {
+    const hash = await _run((c) => c.resolveMarket(marketId, outcome));
+    if (hash) onSuccess && onSuccess("resolve", hash);
+    return hash;
+  }, [_run, onSuccess]);
+
+  const cancelMarket = useCallback(async (marketId) => {
+    const hash = await _run((c) => c.cancelMarket(marketId));
+    if (hash) onSuccess && onSuccess("cancel", hash);
+    return hash;
+  }, [_run, onSuccess]);
 
   return {
-    account: account,
-    provider: null,
-    signer: null,
-    contract: contract,
-    chainId: chainId,
-    balance: balance,
-    connecting: connecting,
-    error: error,
-    walletName: "OP Wallet",
-    connect: connect,
-    disconnect: disconnect,
-    refreshBalance: refreshBalance,
-    isConnected: !!account,
-    shortAddr: account ? account.slice(0, 6) + "..." + account.slice(-4) : null,
+    placeBet, claimReward, createMarket, resolveMarket, cancelMarket,
+    pending, txHash, error, clearError: () => setError(null),
   };
+}
+
+// ── useUserBets ───────────────────────────────────────────────────────────────
+export function useUserBets(contract, account) {
+  const [userBets, setUserBets] = useState([]);
+  const [loading,  setLoading]  = useState(false);
+
+  const fetchBets = useCallback(async () => {
+    if (!account) { setUserBets([]); return; }
+    setLoading(true);
+    try {
+      const c = contract || await getContract().catch(() => null);
+      if (!c) return;
+      const ids  = await c.getUserBetIds(account);
+      const list = [];
+      for (const id of ids) {
+        try {
+          const m = await c.getMarket(id);
+          const b = await c.getUserBet(id, account);
+          list.push({
+            marketId  : Number(id),
+            question  : m.question,
+            category  : m.category,
+            endTime   : Number(m.endTime),
+            resolved  : m.resolved,
+            outcome   : m.outcome,
+            cancelled : m.cancelled,
+            yesAmount : ethers.formatEther(b.yesAmount),
+            noAmount  : ethers.formatEther(b.noAmount),
+            claimed   : b.claimed,
+            yesPool   : ethers.formatEther(m.yesPool),
+            noPool    : ethers.formatEther(m.noPool),
+          });
+        } catch (e) {
+          console.warn("bet fetch error", id, e.message);
+        }
+      }
+      setUserBets(list);
+    } catch (e) {
+      console.error("useUserBets error:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [contract, account]);
+
+  useEffect(() => { fetchBets(); }, [fetchBets]);
+
+  return { userBets, loading, refetch: fetchBets };
 }
