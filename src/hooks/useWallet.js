@@ -2,20 +2,35 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { ethers } from "ethers";
 import { CONTRACT_ADDRESS, ABI } from "../abi/index.js";
 
+// ─────────────────────────────────────────────────────────────────
+// OP_WALLET DETECTION
+// OP_WALLET (opnet.org) is forked from UniSat.
+// It injects itself as window.opnet on the page.
+// We check every known injection key.
+// ─────────────────────────────────────────────────────────────────
+
 function getOPWallet() {
   if (typeof window === "undefined") return null;
-  if (window.opwallet) return window.opwallet;
+
+  // OP_WALLET primary — confirmed injection point
   if (window.opnet) return window.opnet;
-  if (window.bitcoin && window.bitcoin.opnet) return window.bitcoin.opnet;
+
+  // OP_WALLET alternate keys used in some versions
+  if (window.opwallet) return window.opwallet;
+  if (window.OPWallet) return window.OPWallet;
+
+  // OP_WALLET may also override window.ethereum like MetaMask does
   if (window.ethereum) return window.ethereum;
+
   return null;
 }
 
+// Poll for up to `ms` ms — extensions inject asynchronously after page load
 function waitForOPWallet(ms) {
-  var maxMs = ms || 3000;
   return new Promise(function(resolve) {
     var w = getOPWallet();
     if (w) { resolve(w); return; }
+
     var interval = setInterval(function() {
       var found = getOPWallet();
       if (found) {
@@ -24,36 +39,46 @@ function waitForOPWallet(ms) {
         resolve(found);
       }
     }, 100);
+
     var timeout = setTimeout(function() {
       clearInterval(interval);
       resolve(null);
-    }, maxMs);
+    }, ms || 3000);
   });
 }
 
+// ─────────────────────────────────────────────────────────────────
+// HOOK
+// ─────────────────────────────────────────────────────────────────
 export function useWallet() {
-  const [account,    setAccount]    = useState(null);
-  const [provider,   setProvider]   = useState(null);
-  const [signer,     setSigner]     = useState(null);
-  const [contract,   setContract]   = useState(null);
-  const [chainId,    setChainId]    = useState(null);
-  const [balance,    setBalance]    = useState("0");
-  const [connecting, setConnecting] = useState(false);
-  const [error,      setError]      = useState(null);
-  const [walletName, setWalletName] = useState(null);
-  const busy = useRef(false);
+  var [account,    setAccount]    = useState(null);
+  var [provider,   setProvider]   = useState(null);
+  var [signer,     setSigner]     = useState(null);
+  var [contract,   setContract]   = useState(null);
+  var [chainId,    setChainId]    = useState(null);
+  var [balance,    setBalance]    = useState("0");
+  var [connecting, setConnecting] = useState(false);
+  var [error,      setError]      = useState(null);
+  var [walletName, setWalletName] = useState(null);
+  var busy = useRef(false);
 
-  const _setup = useCallback(async (raw) => {
-    const p = new ethers.BrowserProvider(raw);
-    const s = await p.getSigner();
-    const n = await p.getNetwork();
-    const a = await s.getAddress();
-    const b = await p.getBalance(a);
-    let c = null;
+  var _setup = useCallback(async function(raw) {
+    var p = new ethers.BrowserProvider(raw);
+    var s = await p.getSigner();
+    var n = await p.getNetwork();
+    var a = await s.getAddress();
+    var b = await p.getBalance(a);
+
+    var c = null;
     if (CONTRACT_ADDRESS && CONTRACT_ADDRESS !== "0x0000000000000000000000000000000000000000") {
       c = new ethers.Contract(CONTRACT_ADDRESS, ABI, s);
     }
-    const name = (raw === window.opwallet || raw === window.opnet) ? "OP Wallet" : "MetaMask";
+
+    var name = "OP Wallet";
+    if (raw === window.ethereum && !window.opnet && !window.opwallet) {
+      name = "MetaMask";
+    }
+
     setAccount(a);
     setProvider(p);
     setSigner(s);
@@ -64,26 +89,32 @@ export function useWallet() {
     setError(null);
   }, []);
 
-  const connect = useCallback(async () => {
+  var connect = useCallback(async function() {
     if (busy.current) return;
     busy.current = true;
     setConnecting(true);
     setError(null);
+
     try {
-      const raw = await waitForOPWallet(3000);
+      var raw = await waitForOPWallet(3000);
+
       if (!raw) {
-        throw new Error("OP Wallet not found. Install the OP Wallet extension and refresh.");
+        throw new Error("OP Wallet not found. Make sure OP_WALLET extension is installed and refresh the page.");
       }
-      const accounts = await raw.request({ method: "eth_requestAccounts" });
+
+      var accounts = await raw.request({ method: "eth_requestAccounts" });
+
       if (!accounts || accounts.length === 0) {
-        throw new Error("No accounts found. Please unlock your OP Wallet.");
+        throw new Error("No accounts returned. Please unlock your OP Wallet.");
       }
+
       await _setup(raw);
+
     } catch (err) {
       if (err.code === 4001) {
-        setError("Rejected. Please approve in OP Wallet.");
+        setError("Rejected. Please approve the connection in OP Wallet.");
       } else if (err.code === -32002) {
-        setError("OP Wallet popup already open.");
+        setError("OP Wallet popup is already open. Check your browser extension.");
       } else {
         setError(err.message || "Failed to connect OP Wallet.");
       }
@@ -93,7 +124,7 @@ export function useWallet() {
     }
   }, [_setup]);
 
-  const disconnect = useCallback(() => {
+  var disconnect = useCallback(function() {
     setAccount(null);
     setProvider(null);
     setSigner(null);
@@ -104,69 +135,79 @@ export function useWallet() {
     setError(null);
   }, []);
 
-  const refreshBalance = useCallback(async () => {
+  var refreshBalance = useCallback(async function() {
     if (!provider || !account) return;
     try {
-      const b = await provider.getBalance(account);
+      var b = await provider.getBalance(account);
       setBalance(ethers.formatEther(b));
     } catch (e) {
-      console.log("balance refresh failed", e);
+      console.log("refreshBalance error", e);
     }
   }, [provider, account]);
 
-  useEffect(() => {
-    waitForOPWallet(3000).then(async (raw) => {
+  // Auto-reconnect silently on page load
+  useEffect(function() {
+    waitForOPWallet(3000).then(async function(raw) {
       if (!raw) return;
       try {
-        const accs = await raw.request({ method: "eth_accounts" });
+        var accs = await raw.request({ method: "eth_accounts" });
         if (accs && accs.length > 0) {
           await _setup(raw);
         }
       } catch (e) {
-        console.log("auto-reconnect failed", e);
+        console.log("auto-reconnect skipped", e);
       }
     });
   }, [_setup]);
 
-  useEffect(() => {
-    let raw = null;
-    let active = true;
+  // Listen for wallet events
+  useEffect(function() {
+    var active = true;
+    var raw = null;
 
-    waitForOPWallet(3000).then((w) => {
+    waitForOPWallet(3000).then(function(w) {
       if (!w || !active) return;
       raw = w;
-      const onAccounts = (accs) => {
+
+      function onAccounts(accs) {
         if (!accs || accs.length === 0) {
           disconnect();
         } else {
-          _setup(raw).catch((e) => console.log(e));
+          _setup(raw).catch(function(e) { console.log(e); });
         }
-      };
-      const onChain = () => window.location.reload();
-      const onDisconnect = () => disconnect();
+      }
+
+      function onChain() {
+        window.location.reload();
+      }
+
+      function onDisconnect() {
+        disconnect();
+      }
+
       raw.on("accountsChanged", onAccounts);
       raw.on("chainChanged", onChain);
       raw.on("disconnect", onDisconnect);
     });
 
-    return () => {
+    return function() {
       active = false;
     };
   }, [_setup, disconnect]);
 
   return {
-    account,
-    provider,
-    signer,
-    contract,
-    chainId,
-    balance,
-    connecting,
-    error,
-    walletName,
-    connect,
-    disconnect,
-    refreshBalance,
+    account: account,
+    provider: provider,
+    signer: signer,
+    contract: contract,
+    chainId: chainId,
+    balance: balance,
+    connecting: connecting,
+    error: error,
+    walletName: walletName,
+    connect: connect,
+    disconnect: disconnect,
+    refreshBalance: refreshBalance,
     isConnected: !!account,
     shortAddr: account ? account.slice(0, 6) + "..." + account.slice(-4) : null,
   };
