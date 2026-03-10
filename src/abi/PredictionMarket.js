@@ -1,0 +1,37 @@
+export const ABI = [
+  "event MarketCreated(uint256 indexed id, address indexed creator, string question, uint256 endTime)",
+  "event BetPlaced(uint256 indexed marketId, address indexed user, bool side, uint256 amount)",
+  "event MarketResolved(uint256 indexed marketId, bool outcome)",
+  "event RewardClaimed(uint256 indexed marketId, address indexed user, uint256 amount)",
+  "event MarketCancelled(uint256 indexed marketId)",
+  "event FeeWithdrawn(address indexed to, uint256 amount)",
+  "event ResolverAdded(address indexed resolver)",
+  "event ResolverRemoved(address indexed resolver)",
+  "function owner() view returns (address)",
+  "function platformFee() view returns (uint256)",
+  "function marketCount() view returns (uint256)",
+  "function totalVolume() view returns (uint256)",
+  "function accumulatedFees() view returns (uint256)",
+  "function resolvers(address) view returns (bool)",
+  "function getMarket(uint256 marketId) view returns (tuple(uint256 id, string question, string category, address creator, uint256 createdAt, uint256 endTime, uint256 yesPool, uint256 noPool, bool resolved, bool outcome, bool cancelled, string imageUrl))",
+  "function getAllMarkets() view returns (tuple(uint256 id, string question, string category, address creator, uint256 createdAt, uint256 endTime, uint256 yesPool, uint256 noPool, bool resolved, bool outcome, bool cancelled, string imageUrl)[])",
+  "function getActiveMarketIds() view returns (uint256[])",
+  "function getOdds(uint256 marketId) view returns (uint256 yesPct, uint256 noPct)",
+  "function getPotentialPayout(uint256 marketId, bool side, uint256 amount) view returns (uint256)",
+  "function getUserBet(uint256 marketId, address user) view returns (tuple(uint256 yesAmount, uint256 noAmount, bool claimed))",
+  "function getUserBetIds(address user) view returns (uint256[])",
+  "function createMarket(string question, string category, uint256 duration, string imageUrl) returns (uint256)",
+  "function betYes(uint256 marketId) payable",
+  "function betNo(uint256 marketId) payable",
+  "function resolveMarket(uint256 marketId, bool outcome)",
+  "function cancelMarket(uint256 marketId)",
+  "function claim(uint256 marketId)",
+  "function addResolver(address resolver)",
+  "function removeResolver(address resolver)",
+  "function setPlatformFee(uint256 fee)",
+  "function withdrawFees(address to)",
+];
+
+export const CONTRACT_ADDRESS =
+  import.meta.env.VITE_CONTRACT_ADDRESS ||
+  "0x0000000000000000000000000000000000000000";
