@@ -4,29 +4,30 @@ import { CONTRACT_ADDRESS, ABI } from "../abi/index.js";
 
 function getOPWallet() {
   if (typeof window === "undefined") return null;
-  if (window.opwallet)           return window.opwallet;
-  if (window.opnet)              return window.opnet;
-  if (window.bitcoin?.opnet)     return window.bitcoin.opnet;
-  if (window.ethereum)           return window.ethereum;
+  if (window.opwallet) return window.opwallet;
+  if (window.opnet) return window.opnet;
+  if (window.bitcoin && window.bitcoin.opnet) return window.bitcoin.opnet;
+  if (window.ethereum) return window.ethereum;
   return null;
 }
 
-function waitForOPWallet(ms = 3000) {
-  return new Promise((resolve) => {
-    const w = getOPWallet();
-    if (w) return resolve(w);
-    const interval = setInterval(() => {
-      const found = getOPWallet();
+function waitForOPWallet(ms) {
+  var maxMs = ms || 3000;
+  return new Promise(function(resolve) {
+    var w = getOPWallet();
+    if (w) { resolve(w); return; }
+    var interval = setInterval(function() {
+      var found = getOPWallet();
       if (found) {
         clearInterval(interval);
         clearTimeout(timeout);
         resolve(found);
       }
     }, 100);
-    const timeout = setTimeout(() => {
+    var timeout = setTimeout(function() {
       clearInterval(interval);
       resolve(null);
-    }, ms);
+    }, maxMs);
   });
 }
 
@@ -43,22 +44,22 @@ export function useWallet() {
   const busy = useRef(false);
 
   const _setup = useCallback(async (raw) => {
-    const ethersProvider = new ethers.BrowserProvider(raw);
-    const ethersSigner   = await ethersProvider.getSigner();
-    const network        = await ethersProvider.getNetwork();
-    const address        = await ethersSigner.getAddress();
-    const bal            = await ethersProvider.getBalance(address);
+    const p = new ethers.BrowserProvider(raw);
+    const s = await p.getSigner();
+    const n = await p.getNetwork();
+    const a = await s.getAddress();
+    const b = await p.getBalance(a);
     let c = null;
     if (CONTRACT_ADDRESS && CONTRACT_ADDRESS !== "0x0000000000000000000000000000000000000000") {
-      c = new ethers.Contract(CONTRACT_ADDRESS, ABI, ethersSigner);
+      c = new ethers.Contract(CONTRACT_ADDRESS, ABI, s);
     }
     const name = (raw === window.opwallet || raw === window.opnet) ? "OP Wallet" : "MetaMask";
-    setAccount(address);
-    setProvider(ethersProvider);
-    setSigner(ethersSigner);
+    setAccount(a);
+    setProvider(p);
+    setSigner(s);
     setContract(c);
-    setChainId(Number(network.chainId));
-    setBalance(ethers.formatEther(bal));
+    setChainId(Number(n.chainId));
+    setBalance(ethers.formatEther(b));
     setWalletName(name);
     setError(null);
   }, []);
@@ -79,9 +80,13 @@ export function useWallet() {
       }
       await _setup(raw);
     } catch (err) {
-      if (err.code === 4001)    setError("Rejected. Please approve in OP Wallet.");
-      else if (err.code === -32002) setError("OP Wallet popup already open.");
-      else setError(err.message || "Failed to connect OP Wallet.");
+      if (err.code === 4001) {
+        setError("Rejected. Please approve in OP Wallet.");
+      } else if (err.code === -32002) {
+        setError("OP Wallet popup already open.");
+      } else {
+        setError(err.message || "Failed to connect OP Wallet.");
+      }
     } finally {
       setConnecting(false);
       busy.current = false;
@@ -89,9 +94,14 @@ export function useWallet() {
   }, [_setup]);
 
   const disconnect = useCallback(() => {
-    setAccount(null); setProvider(null); setSigner(null);
-    setContract(null); setChainId(null); setBalance("0");
-    setWalletName(null); setError(null);
+    setAccount(null);
+    setProvider(null);
+    setSigner(null);
+    setContract(null);
+    setChainId(null);
+    setBalance("0");
+    setWalletName(null);
+    setError(null);
   }, []);
 
   const refreshBalance = useCallback(async () => {
@@ -99,7 +109,9 @@ export function useWallet() {
     try {
       const b = await provider.getBalance(account);
       setBalance(ethers.formatEther(b));
-    } catch {/* ignore */}
+    } catch (e) {
+      console.log("balance refresh failed", e);
+    }
   }, [provider, account]);
 
   useEffect(() => {
@@ -107,20 +119,55 @@ export function useWallet() {
       if (!raw) return;
       try {
         const accs = await raw.request({ method: "eth_accounts" });
-        if (accs?.length > 0) await _setup(raw);
-      } catch {/* not connected yet */}
+        if (accs && accs.length > 0) {
+          await _setup(raw);
+        }
+      } catch (e) {
+        console.log("auto-reconnect failed", e);
+      }
     });
   }, [_setup]);
 
   useEffect(() => {
     let raw = null;
     let active = true;
+
     waitForOPWallet(3000).then((w) => {
       if (!w || !active) return;
       raw = w;
       const onAccounts = (accs) => {
-        if (!accs?.length) disconnect();
-        else _setup(raw).catch(console.error);
+        if (!accs || accs.length === 0) {
+          disconnect();
+        } else {
+          _setup(raw).catch((e) => console.log(e));
+        }
       };
       const onChain = () => window.location.reload();
-      c
+      const onDisconnect = () => disconnect();
+      raw.on("accountsChanged", onAccounts);
+      raw.on("chainChanged", onChain);
+      raw.on("disconnect", onDisconnect);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [_setup, disconnect]);
+
+  return {
+    account,
+    provider,
+    signer,
+    contract,
+    chainId,
+    balance,
+    connecting,
+    error,
+    walletName,
+    connect,
+    disconnect,
+    refreshBalance,
+    isConnected: !!account,
+    shortAddr: account ? account.slice(0, 6) + "..." + account.slice(-4) : null,
+  };
+}
